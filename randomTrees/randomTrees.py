@@ -1,8 +1,11 @@
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 
 
 class DataLoader:
@@ -12,70 +15,53 @@ class DataLoader:
 
 
 class Preprocessor:
-    def __init__(self, train, test):
-        self.train = train
-        self.test = test
-        self.num_cols = ['Age', 'RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
-        self.cat_cols = ['CryoSleep', 'VIP']
-        self.ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-
-    def fill_missing_values(self):
-        for col in self.num_cols:
-            median = self.train[col].median()
-            self.train[col] = self.train[col].infer_objects(median)
-            self.test[col] = self.test[col].infer_objects(median)
-
-        for col in self.cat_cols:
-            mode = self.train[col].mode()[0]
-            self.train[col] = self.train[col].infer_objects(mode).astype(str)
-            self.test[col] = self.test[col].infer_objects(mode).astype(str)
-
-        self.train['HomePlanet'] = self.train['HomePlanet'].infer_objects('Earth')
-        self.test['HomePlanet'] = self.test['HomePlanet'].infer_objects('Earth')
-
-        self.train['Destination'] = self.train['Destination'].infer_objects('TRAPPIST-1e')
-        self.test['Destination'] = self.test['Destination'].infer_objects('TRAPPIST-1e')
-
-        self.train['Cabin'] = self.train['Cabin'].infer_objects('G/0/S')
-        self.test['Cabin'] = self.test['Cabin'].infer_objects('G/0/S')
-
-    def encode_features(self):
-        cat_features = ['HomePlanet', 'CryoSleep', 'Cabin', 'Destination', 'VIP']
-
-        self.train[cat_features] = self.train[cat_features].astype(str)
-        self.test[cat_features] = self.test[cat_features].astype(str)
-
-        self.ohe.fit(self.train[cat_features])
-
-        train_cat = pd.DataFrame(
-            self.ohe.transform(self.train[cat_features]),
-            columns=self.ohe.get_feature_names_out(cat_features)
-        )
-        test_cat = pd.DataFrame(
-            self.ohe.transform(self.test[cat_features]),
-            columns=self.ohe.get_feature_names_out(cat_features)
-        )
-
-        train_cat.reset_index(drop=True, inplace=True)
-        test_cat.reset_index(drop=True, inplace=True)
-        self.train.reset_index(drop=True, inplace=True)
-        self.test.reset_index(drop=True, inplace=True)
-
-        train_final = pd.concat([self.train[self.num_cols], train_cat], axis=1)
-        test_final = pd.concat([self.test[self.num_cols], test_cat], axis=1)
-
-        return train_final, test_final
-
-
-class Model:
     def __init__(self):
-        self.clf = RandomForestClassifier()
+        self.numerical_features = ['Age', 'RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
+        self.categorical_features = ['HomePlanet', 'CryoSleep', 'Cabin', 'Destination', 'VIP']
 
-    def train(self, X, y):
-        self.clf.fit(X, y)
+    def preprocess_train(self, df):
+        df = df.copy()
+        # Separando Cabin
+        df[['Cabin_Deck', 'Cabin_Num', 'Cabin_Side']] = df['Cabin'].str.split('/', expand=True)
+        self.categorical_features.remove('Cabin')
+        self.categorical_features.extend(['Cabin_Deck', 'Cabin_Side'])
 
-    def predict(self, X):
-        return self.clf.predict(X)
+        return df
+
+    def preprocess_test(self, df):
+        df = df.copy()
+        # Separando Cabin
+        df[['Cabin_Deck', 'Cabin_Num', 'Cabin_Side']] = df['Cabin'].str.split('/', expand=True)
+        return df
+
+
+def create_pipeline():
+    numerical_features = ['Age', 'RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
+    categorical_features = ['HomePlanet', 'CryoSleep', 'Destination', 'VIP', 'Cabin_Deck', 'Cabin_Side']
+
+    numerical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numerical_transformer, numerical_features),
+            ('cat', categorical_transformer, categorical_features)
+        ],
+        remainder='passthrough'  # Manter outras colunas (PassengerId)
+    )
+
+    model = RandomForestClassifier(random_state=42)
+
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', model)])
+    return pipeline
 
 
 class Submission:
@@ -87,32 +73,78 @@ class Submission:
     def save(self):
         submission_df = pd.DataFrame({
             'PassengerId': self.test_df['PassengerId'],
-            'Transported': self.predictions
+            'Transported': self.predictions.astype(bool)
         })
         submission_df.to_csv(self.filename, index=False)
+        print(f"Submission file saved to {self.filename}")
 
 
-# Pipeline
 if __name__ == '__main__':
     # Carrega os dados
     data = DataLoader("../dataset/train.csv", "../dataset/test.csv")
 
-    # Divide em treino/validação para calcular acurácia
-    train_df, val_df = train_test_split(data.train, test_size=0.2, random_state=42)
+    # Pré-processamento inicial para separar 'Cabin' antes da divisão
+    preprocessor_initial = Preprocessor()
+    train_df_processed = preprocessor_initial.preprocess_train(data.train.copy())
+    test_df_processed = preprocessor_initial.preprocess_test(data.test.copy())
 
-    # Pré-processamento
-    prep = Preprocessor(train_df.copy(), val_df.copy())
-    prep.fill_missing_values()
-    X_train, X_val = prep.encode_features()
+    # Divide em treino/validação
+    train_df, val_df = train_test_split(train_df_processed, test_size=0.2, random_state=42,
+                                        stratify=train_df_processed['Transported'])
 
+    # Separa as features e a variável alvo
+    X_train = train_df.drop('Transported', axis=1)
     y_train = train_df['Transported']
+    X_val = val_df.drop('Transported', axis=1)
     y_val = val_df['Transported']
+    X_test = test_df_processed.copy()
 
-    # Modelo
-    model = Model()
-    model.train(X_train, y_train)
-    val_predictions = model.predict(X_val)
+    # Cria o pipeline
+    pipeline = create_pipeline()
 
-    # Cálculo da acurácia
-    acc = accuracy_score(y_val, val_predictions)
-    print(f"Acurácia na validação: {acc:.4f}")
+    # Define os hiperparâmetros para busca
+    param_grid = {
+        'classifier__n_estimators': [100, 200, 300],
+        'classifier__max_depth': [None, 10, 20, 30],
+        'classifier__min_samples_split': [2, 5, 10],
+        'classifier__min_samples_leaf': [1, 3, 5],
+        'classifier__max_features': ['sqrt', 'log2'],
+        'preprocessor__num__imputer__strategy': ['mean', 'median'],
+        'preprocessor__cat__imputer__strategy': ['most_frequent', 'constant'],
+        'preprocessor__cat__imputer__fill_value': ['Missing']  # Para 'constant'
+    }
+
+    # Realiza a busca por hiperparâmetros usando validação cruzada
+    grid_search = GridSearchCV(pipeline, param_grid, cv=5, scoring='accuracy', n_jobs=-1, verbose=1)
+    grid_search.fit(X_train, y_train)
+
+    # Melhores parâmetros encontrados
+    print(f"Melhores hiperparâmetros encontrados: {grid_search.best_params_}")
+
+    # Avalia o modelo com os melhores parâmetros no conjunto de validação
+    best_model = grid_search.best_estimator_
+    val_predictions = best_model.predict(X_val)
+    accuracy = accuracy_score(y_val, val_predictions)
+    print(f"Acurácia na validação com os melhores parâmetros: {accuracy:.4f}")
+
+    # Treina o modelo final com todos os dados de treino e os melhores parâmetros
+    final_model = RandomForestClassifier(**grid_search.best_params_['classifier'], random_state=42)
+
+    # Refaz o pré-processamento no dataset de treino completo
+    full_train_processed = preprocessor_initial.preprocess_train(data.train.copy())
+    X_full_train = full_train_processed.drop('Transported', axis=1)
+    y_full_train = full_train_processed['Transported']
+
+    # Cria um pipeline de pré-processamento final
+    final_preprocessor = create_pipeline().named_steps['preprocessor']
+    X_full_train_transformed = final_preprocessor.fit_transform(X_full_train)
+    X_test_transformed = final_preprocessor.transform(X_test)
+
+    final_model.fit(X_full_train_transformed, y_full_train)
+
+    # Faz as previsões no conjunto de teste
+    test_predictions = final_model.predict(X_test_transformed)
+
+    # Cria e salva o arquivo de submissão
+    submission = Submission(data.test, test_predictions)
+    submission.save()
