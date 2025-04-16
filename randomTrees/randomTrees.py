@@ -79,7 +79,7 @@ class Model:
 
 
 class Submission:
-    def __init__(self, test_df, predictions, filename='result.csv'):
+    def __init__(self, test_df, predictions, filename='submission.csv'):
         self.test_df = test_df
         self.predictions = predictions
         self.filename = filename
