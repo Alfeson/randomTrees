@@ -7,6 +7,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
+
 # Implementação de uma Random Forest personalizada
 class RandomForest:
     def __init__(self, n_trees=100, max_depth=None, max_features='sqrt', random_state=None):
@@ -67,13 +68,14 @@ class RandomForest:
         final_predictions = np.apply_along_axis(lambda row: np.bincount(row).argmax(), axis=1, arr=predictions)
         return final_predictions
 
+
 # ---------------------------
 # Exemplo de uso real com os dados da competição Spaceship Titanic
 # ---------------------------
 if __name__ == "__main__":
     # Carrega os arquivos CSV
-    train = pd.read_csv("train.csv")
-    test = pd.read_csv("test.csv")
+    train = pd.read_csv("../dataset/train.csv")
+    test = pd.read_csv("../dataset/test.csv")
 
     # Preenche valores nulos com o último valor válido (forward fill)
     train.fillna(method="ffill", inplace=True)
